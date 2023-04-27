@@ -1,0 +1,70 @@
+version: 2.1
+
+orbs:
+  python: circleci/python@1.5.0
+  coverage-reporter: codacy/coverage-reporter@13.13.0
+
+# Define a job to be invoked later in a workflow.
+# See: https://circleci.com/docs/2.0/configuration-reference/#jobs
+jobs:
+  build-and-test:
+    working_directory: ~/my-project
+
+    docker:
+      - image: cimg/python:3.10.2
+      - image: cimg/redis:7.0
+    steps:
+      - checkout
+
+      - add_ssh_keys:
+          fingerprints:
+            - "${GIT_SSH_DEPLOY_FINGERPRINT}"
+
+      - python/install-packages:
+          app-dir: ./backend
+          pkg-manager: pip
+
+      - run:
+          name: Run tests
+          command: |
+            mkdir test-reports/
+            pytest -ra --junitxml=test-reports/report.xml tests/tests.py
+
+      - run:
+          name: run coverage
+          command: |
+            python -m coverage run -m pytest tests/tests.py
+            python -m coverage xml
+            python -m coverage html
+            cp htmlcov/index.html test-reports/coverage.html
+
+      - run:
+          name: create openapi spec
+          command: |
+            cd backend/joblog/
+            flask spec --output docs/openapi.yaml
+            git config user.email "${GIT_EMAIL}"
+            git config user.name "CircleCI Job"
+            git commit --allow-empty -am "Automatic Commit from CircleCI [ci skip]"
+            git push
+
+      - coverage-reporter/send_report:
+          coverage-reports: coverage.xml
+          skip: false
+          project-token: $CODACY_PROJECT_TOKEN
+
+      - store_artifacts:
+          path: test-reports/
+
+      - store_test_results:
+          path: test-reports/
+
+
+# Invoke jobs via workflows
+# See: https://circleci.com/docs/2.0/configuration-reference/#workflows
+workflows:
+  pre-merge:
+    jobs:
+      - build-and-test
+
+
